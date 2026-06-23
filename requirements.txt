@@ -1,0 +1,2 @@
+# El modo API usa exclusivamente la biblioteca estándar de Python.
+# Playwright solo es necesario para el adaptador legado opcional de navegador.
