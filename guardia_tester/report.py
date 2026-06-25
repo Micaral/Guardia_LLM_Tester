@@ -502,8 +502,21 @@ def _render_signal_cards(signal_aggregates: list[dict]) -> str:
         "<span class='cnt-tn'>■ TN permitido correctamente</span>"
         "</div>"
     )
+    # Count signal-level totals for the disclaimer
+    signal_attempts = sum(s["total"] for s in signal_aggregates)
+    note = (
+        "<div class='signal-scope-note'>"
+        "<strong>Alcance:</strong> Solo casos <em>block</em> con señales etiquetadas. "
+        "Los falsos positivos (textos <em>allow</em> bloqueados por error) y los verdaderos negativos "
+        "(<em>allow</em> correctamente permitidos) no tienen señales asignadas y aparecen únicamente "
+        "en los KPIs globales de arriba. "
+        f"Los casos multi-señal se contabilizan una vez por señal, por eso el total de intentos "
+        f"aquí ({signal_attempts:,}) supera el total global."
+        "</div>"
+    )
     return (
         "<div class='section-label'>Rendimiento por tipo de señal</div>"
+        f"{note}"
         f"{legend}"
         f"<div class='signal-grid'>{''.join(cards)}</div>"
     )
@@ -618,6 +631,7 @@ main.container{padding-top:2rem;padding-bottom:4rem}
 .signal-counts{display:flex;gap:.75rem;margin-top:.5rem;font-size:.7rem;font-weight:600}
 .cnt-tp{color:#15803d}.cnt-fp{color:#b45309}.cnt-fn{color:#b91c1c}.cnt-tn{color:#94a3b8}
 .signal-legend{display:flex;flex-wrap:wrap;gap:1rem;margin-bottom:.75rem;font-size:.72rem;font-weight:600}
+.signal-scope-note{background:#eff6ff;border:1px solid #bfdbfe;border-radius:.5rem;padding:.65rem 1rem;font-size:.76rem;color:#1e40af;margin-bottom:.75rem;line-height:1.5}
 
 /* ---- Config panels ---- */
 .config-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:.25rem}
