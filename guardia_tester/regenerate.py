@@ -34,15 +34,16 @@ def load_results(path: Path) -> tuple[list[TestResult], str]:
             error=raw.get("error"),
         ))
     evalset_name = payload.get("evalset") or "legacy"
-    return results, evalset_name
+    run_context: dict | None = payload.get("run_context") or None
+    return results, evalset_name, run_context
 
 
 def regenerate(root: Path) -> list[Path]:
     regenerated: list[Path] = []
     for json_path in sorted(root.rglob("results.json")):
-        results, evalset_name = load_results(json_path)
+        results, evalset_name, run_context = load_results(json_path)
         report_path = json_path.with_name("report.html")
-        write_html_report(results, report_path, evalset_name)
+        write_html_report(results, report_path, evalset_name, run_context)
         regenerated.append(report_path)
     return regenerated
 

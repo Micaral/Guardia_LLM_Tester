@@ -17,6 +17,164 @@ class RequestTemplateError(RuntimeError):
     pass
 
 
+class KarasenaAPIClient:
+    """Native Karasena API client authenticated with a static Bearer JWT token."""
+
+    DEFAULT_BASE_URL = "https://guardia.karasena.com"
+
+    def __init__(
+        self,
+        token: str,
+        base_url: str = DEFAULT_BASE_URL,
+        platform_code: str | None = None,
+        timeout_seconds: int = 30,
+    ):
+        self.base_url = base_url.rstrip("/")
+        self.platform_code = platform_code
+        self.timeout_seconds = timeout_seconds
+        self._token = token
+        self.token_expires_at = self._decode_expiry(token)
+        self._validate_token_lifetime()
+
+    def reload_token(self, new_token: str) -> None:
+        """Swap in a fresh token mid-run without losing accumulated results."""
+        self._token = new_token
+        self.token_expires_at = self._decode_expiry(new_token)
+        self._validate_token_lifetime()
+
+    def _auth_headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self._token}", "Accept": "application/json"}
+
+    def _validate_token_lifetime(self) -> None:
+        if self.token_expires_at is None:
+            return
+        if time.time() >= self.token_expires_at - 15:
+            raise RequestTemplateError(
+                "El token ha caducado. Actualiza KARASENA_TOKEN en .env y vuelve a ejecutar."
+            )
+
+    async def check(self, prompt: str) -> tuple[Decision, str]:
+        self._validate_token_lifetime()
+        return await asyncio.to_thread(self._check_sync, prompt)
+
+    def _check_sync(self, prompt: str) -> tuple[Decision, str]:
+        body: dict[str, Any] = {"text": prompt}
+        if self.platform_code:
+            body["plataforma"] = self.platform_code
+        payload = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        headers = {**self._auth_headers(), "Content-Type": "application/json"}
+        req = urllib.request.Request(
+            f"{self.base_url}/api/comprobador", data=payload, headers=headers, method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout_seconds) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            if exc.code in {401, 403}:
+                raise RequestTemplateError(
+                    "La sesión ha caducado. Actualiza KARASENA_TOKEN en .env."
+                ) from exc
+            raise RequestTemplateError(f"Karasena devolvió HTTP {exc.code}") from exc
+        except urllib.error.URLError as exc:
+            raise RequestTemplateError(f"No se pudo conectar con Karasena: {exc.reason}") from exc
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RequestTemplateError("Karasena devolvió una respuesta que no es JSON") from exc
+        return _parse_comprobador_response(data)
+
+    def _get_json(self, path: str) -> Any:
+        req = urllib.request.Request(
+            f"{self.base_url}{path}", headers=self._auth_headers(), method="GET"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout_seconds) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            return None
+
+    def _put_json(self, path: str, body: dict) -> Any:
+        payload = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        headers = {**self._auth_headers(), "Content-Type": "application/json"}
+        req = urllib.request.Request(
+            f"{self.base_url}{path}", data=payload, headers=headers, method="PUT"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout_seconds) as resp:
+                raw = resp.read()
+                return json.loads(raw.decode("utf-8")) if raw.strip() else {}
+        except urllib.error.HTTPError as exc:
+            if exc.code in {401, 403}:
+                raise RequestTemplateError("Sesión caducada durante la actualización del prompt.") from exc
+            raise RequestTemplateError(f"Karasena devolvió HTTP {exc.code} al actualizar el prompt.") from exc
+        except urllib.error.URLError as exc:
+            raise RequestTemplateError(f"No se pudo conectar con Karasena: {exc.reason}") from exc
+
+    def get_my_company(self) -> dict | None:
+        result = self._get_json("/api/companies/mycompany")
+        return result if isinstance(result, dict) else None
+
+    def list_platforms(self) -> list[dict]:
+        result = self._get_json("/api/plataformas")
+        return result if isinstance(result, list) else []
+
+    def get_user_context(self) -> dict | None:
+        result = self._get_json("/api/usuarios/contexto")
+        return result if isinstance(result, dict) else None
+
+    def get_prompts(self) -> list[dict]:
+        result = self._get_json("/api/prompts/mycompany")
+        return result if isinstance(result, list) else []
+
+    def get_prompt_by_id(self, prompt_id: int) -> dict | None:
+        result = self._get_json(f"/api/prompts/mycompany/{prompt_id}")
+        return result if isinstance(result, dict) else None
+
+    def set_prompt_active(self, prompt_id: int, active: bool) -> dict:
+        current = self.get_prompt_by_id(prompt_id)
+        if current is None:
+            raise RequestTemplateError(f"Prompt {prompt_id} no encontrado en esta empresa.")
+        body: dict[str, Any] = {
+            "content": current.get("content", ""),
+            "tipoBloqueoId": current.get("tipoBloqueoId"),
+            "nombre": current.get("nombre", ""),
+            "comprobable": active,
+        }
+        result = self._put_json(f"/api/prompts/mycompany/{prompt_id}", body)
+        if result is None:
+            raise RequestTemplateError(f"No se pudo actualizar el prompt {prompt_id}.")
+        return result
+
+    def get_blocking_types(self) -> dict[int, str]:
+        result = self._get_json("/api/tipos-bloqueo")
+        if not isinstance(result, list):
+            return {}
+        return {item["id"]: item.get("nombre", str(item["id"])) for item in result if "id" in item}
+
+    def get_prohibited_topics(self) -> list[dict]:
+        result = self._get_json("/api/temas-prohibidos/mycompany")
+        return result if isinstance(result, list) else []
+
+    @staticmethod
+    def _decode_expiry(token: str) -> float | None:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+        try:
+            payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
+            claims = json.loads(base64.urlsafe_b64decode(payload_b64))
+            expiry = claims.get("exp")
+            return float(expiry) if isinstance(expiry, (int, float)) else None
+        except (ValueError, json.JSONDecodeError):
+            return None
+
+
+def _parse_comprobador_response(data: Any) -> tuple[Decision, str]:
+    if not isinstance(data, dict) or not isinstance(data.get("valido"), bool):
+        raise RequestTemplateError("La respuesta no contiene el booleano 'valido'")
+    decision: Decision = "allow" if data["valido"] else "block"
+    reason_value = data.get("razon")
+    return decision, ("" if reason_value is None else str(reason_value))
+
+
 class CurlKarasenaClient:
     """Replay a browser-captured cURL request, replacing only its JSON `text` field."""
 
@@ -115,7 +273,7 @@ class CurlKarasenaClient:
             data = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise RequestTemplateError("Karasena devolvió una respuesta que no es JSON") from exc
-        return self._parse_response(data)
+        return _parse_comprobador_response(data)
 
     def _authorization_expiry(self) -> float | None:
         authorization = next(
@@ -148,9 +306,4 @@ class CurlKarasenaClient:
 
     @staticmethod
     def _parse_response(data: Any) -> tuple[Decision, str]:
-        if not isinstance(data, dict) or not isinstance(data.get("valido"), bool):
-            raise RequestTemplateError("La respuesta no contiene el booleano 'valido'")
-        decision: Decision = "allow" if data["valido"] else "block"
-        reason_value = data.get("razon")
-        reason = "" if reason_value is None else str(reason_value)
-        return decision, reason
+        return _parse_comprobador_response(data)

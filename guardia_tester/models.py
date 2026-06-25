@@ -46,13 +46,20 @@ class RunSummary:
     true_positives: int
     true_negatives: int
     accuracy: float
+    precision: float
     block_recall: float
+    f1: float
     fp_rate: float
     prompts: int
     stable_pass: int
     flaky: int
     stable_fail: int
     incomplete: int
+    # Response-time percentiles (ms) — computed from completed attempts only
+    avg_duration_ms: float = 0.0
+    p50_duration_ms: int = 0
+    p95_duration_ms: int = 0
+    max_duration_ms: int = 0
     by_group: dict[str, dict[str, int | float]] = field(default_factory=dict)
 
 
@@ -73,3 +80,4 @@ class CaseAggregate:
     block_rate: float
     allow_rate: float
     classification: Literal["STABLE_PASS", "FLAKY", "STABLE_FAIL", "INCOMPLETE"]
+    avg_duration_ms: float = 0.0
