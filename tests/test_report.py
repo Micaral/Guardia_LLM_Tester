@@ -45,11 +45,11 @@ class ReportTests(unittest.TestCase):
             report = Path(directory) / "report.html"
             write_html_report(results, report, "test")
             content = report.read_text(encoding="utf-8")
-            self.assertIn("Evolución por prompt", content)
+            self.assertIn("Evolución por repetición", content)
             self.assertIn("<th>R1</th><th>R2</th><th>R3</th>", content)
-            self.assertIn("decision-pass", content)
-            self.assertIn("decision-fail", content)
-            self.assertIn("block ✗", content)
+            self.assertIn("dec-pass", content)
+            self.assertIn("dec-fail", content)
+            self.assertIn("✗ block", content)
             self.assertNotIn("Intentos individuales", content)
 
 
